@@ -1,0 +1,135 @@
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    exclude:
+    - azure-pipelines.yaml
+
+stages:
+- stage: Build
+  jobs:
+  - job: 
+    pool:
+      vmImage: windows-latest 
+
+    variables:
+      buildConfiguration: 'Release'   
+
+    steps:   
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '6.0.x'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish the project'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifacts'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+- stage: DeployToDevStage
+  dependsOn: Build
+  jobs:
+  - job:
+    steps: 
+    - download: current
+      artifact: drop
+    - task: AzureRmWebAppDeployment@4
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'G3SvcConn'
+        appType: 'webApp'
+        WebAppName: 'HelloWorldDevopsG3'
+        deployToSlotOrASE: true
+        ResourceGroupName: 'NetworkWatcherRG'
+        SlotName: 'production'
+        packageForLinux: '$(Pipeline.Workspace)/**/*.zip'
+
+- stage: DeployToProdStage
+  dependsOn: DeployToDevStage
+  jobs:
+  - job:
+    steps: 
+    - download: current
+      artifact: drop
+    - task: AzureRmWebAppDeployment@4
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'G3SvcConn'
+        appType: 'webApp'
+        WebAppName: 'HelloWorldDevopsG3-prod'
+        deployToSlotOrASE: true
+        ResourceGroupName: 'NetworkWatcherRG'
+        SlotName: 'production'
+        packageForLinux: '$(Pipeline.Workspace)/**/*.zip'
+
+- stage: DeployToDevVM
+  dependsOn: Build
+  jobs:
+  - deployment: DeployToDevVM
+    environment: 
+     name: VMs-Dev
+     tags: webserver
+     resourceType: VirtualMachine
+    strategy:
+     runOnce:
+      deploy:
+        steps:
+          - task: IISWebAppManagementOnMachineGroup@0
+            inputs:
+              EnableIIS: true
+              IISDeploymentType: 'IISWebsite'
+              ActionIISWebsite: 'CreateOrUpdateWebsite'
+              WebsiteName: 'default web site'
+              WebsitePhysicalPath: '%SystemDrive%\inetpub\wwwroot'
+              WebsitePhysicalPathAuth: 'WebsiteUserPassThrough'
+              AddBinding: true
+              Protocol: http
+              IPAddress: 'All Unassigned'
+              port: 80
+
+          - task: IISWebAppDeploymentOnMachineGroup@0
+            inputs:
+              WebSiteName: 'Default web site'
+              Package: '$(Pipeline.Workspace)/**/*.zip'
+              TakeAppOfflineFlag: true
+
+- stage: DeployToProdVM
+  dependsOn: DeployToDevVM
+  jobs:
+  - deployment: DeployToProdVM
+    environment: 
+     name: VMs-Prod
+     tags: webserver
+     resourceType: VirtualMachine
+    strategy:
+     runOnce:
+      deploy:
+        steps:
+          - task: IISWebAppManagementOnMachineGroup@0
+            inputs:
+              EnableIIS: true
+              IISDeploymentType: 'IISWebsite'
+              ActionIISWebsite: 'CreateOrUpdateWebsite'
+              WebsiteName: 'default web site'
+              WebsitePhysicalPath: '%SystemDrive%\inetpub\wwwroot'
+              WebsitePhysicalPathAuth: 'WebsiteUserPassThrough'
+              AddBinding: true
+              Protocol: http
+              IPAddress: 'All Unassigned'
+              port: 80
+
+          - task: IISWebAppDeploymentOnMachineGroup@0
+            inputs:
+              WebSiteName: 'Default web site'
+              Package: '$(Pipeline.Workspace)/**/*.zip'
+              TakeAppOfflineFlag: true

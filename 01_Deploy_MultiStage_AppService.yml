@@ -1,0 +1,71 @@
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    exclude:
+    - azure-pipelines.yaml
+
+stages:
+- stage: Build
+  jobs:
+  - job: 
+    pool:
+      vmImage: windows-latest 
+
+    variables:
+      buildConfiguration: 'Release'   
+
+    steps:   
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '6.0.x'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish the project'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifacts'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+- stage: DeployToDevStage
+  jobs:
+  - job:
+    steps: 
+    - download: current
+      artifact: drop
+    - task: AzureRmWebAppDeployment@4
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'G3SvcConn'
+        appType: 'webApp'
+        WebAppName: 'HelloWorldDevopsG3'
+        deployToSlotOrASE: true
+        ResourceGroupName: 'NetworkWatcherRG'
+        SlotName: 'production'
+        packageForLinux: '$(Pipeline.Workspace)/**/*.zip'
+
+- stage: DeployToProdStage
+  jobs:
+  - job:
+    steps: 
+    - download: current
+      artifact: drop
+    - task: AzureRmWebAppDeployment@4
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'G3SvcConn'
+        appType: 'webApp'
+        WebAppName: 'HelloWorldDevopsG3-prod'
+        deployToSlotOrASE: true
+        ResourceGroupName: 'NetworkWatcherRG'
+        SlotName: 'production'
+        packageForLinux: '$(Pipeline.Workspace)/**/*.zip'
